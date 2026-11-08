@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No npm cache: the project has no dependencies and no lockfile.
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run build
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          ls -R dist
+          test -f dist/index.html
+          test -f dist/app.js
+          test -f dist/style.css
+
+      # Share the build with later jobs (release / deploy)
+      - name: Upload temporary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: ./dist
+          retention-days: 1 # Deletes automatically after 1 day to save storage
