@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1220">
+  <meta name="description" content="Dual N-Back: a working-memory training game. Match the position and the sound from N steps back.">
+  <title>Dual N-Back</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- MENU -->
+    <section id="screen-menu" class="card">
+      <h1>Dual N-Back</h1>
+      <p class="lead">A square lights up and a letter is spoken each round. Press <b>Position</b> if the square matches the one from <b>N</b> rounds ago, and <b>Sound</b> if the letter matches.</p>
+
+      <form id="settings" autocomplete="off">
+        <label class="field">
+          <span>N level</span>
+          <input id="set-n" type="number" min="1" max="9" step="1">
+        </label>
+        <label class="field">
+          <span>Trials per session</span>
+          <input id="set-trials" type="number" min="10" max="60" step="5">
+        </label>
+        <label class="field">
+          <span>Seconds per round</span>
+          <select id="set-interval">
+            <option value="2000">2.0</option>
+            <option value="2500">2.5</option>
+            <option value="3000">3.0</option>
+            <option value="3500">3.5</option>
+            <option value="4000">4.0</option>
+          </select>
+        </label>
+        <label class="check"><input id="set-speak" type="checkbox"> Speak letters aloud</label>
+        <label class="check"><input id="set-show" type="checkbox"> Show letter on screen</label>
+        <label class="check"><input id="set-auto" type="checkbox"> Adjust N automatically after each session</label>
+      </form>
+
+      <button id="btn-start" class="primary" type="button">Start session</button>
+      <p class="hint">Keyboard: <kbd>A</kbd> position match &middot; <kbd>L</kbd> sound match &middot; <kbd>Esc</kbd> quit</p>
+
+      <details id="history-wrap">
+        <summary>Recent sessions</summary>
+        <table id="history">
+          <thead><tr><th>Date</th><th>N</th><th>Position</th><th>Sound</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="history-empty" class="hint">No sessions yet.</p>
+        <button id="btn-clear" class="link" type="button">Clear history</button>
+      </details>
+    </section>
+
+    <!-- GAME -->
+    <section id="screen-game" class="card" hidden>
+      <div class="topbar">
+        <span id="g-level" class="pill">2-back</span>
+        <span id="g-status" class="status">Get ready…</span>
+        <span id="g-progress" class="pill">0 / 20</span>
+      </div>
+      <div class="bar"><div id="g-bar"></div></div>
+
+      <div id="grid" role="img" aria-label="3 by 3 grid">
+        <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+        <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+        <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+      </div>
+      <div id="letter" aria-live="off"></div>
+
+      <div class="controls">
+        <button id="btn-pos" class="answer" type="button">Position <kbd>A</kbd></button>
+        <button id="btn-audio" class="answer" type="button">Sound <kbd>L</kbd></button>
+      </div>
+      <button id="btn-quit" class="link" type="button">Quit session</button>
+    </section>
+
+    <!-- RESULTS -->
+    <section id="screen-results" class="card" hidden>
+      <h2>Session complete</h2>
+      <p id="r-summary" class="lead"></p>
+      <table class="results">
+        <thead><tr><th></th><th>Position</th><th>Sound</th></tr></thead>
+        <tbody>
+          <tr><th>Accuracy</th><td id="r-pos-acc"></td><td id="r-audio-acc"></td></tr>
+          <tr><th>Hits</th><td id="r-pos-hit"></td><td id="r-audio-hit"></td></tr>
+          <tr><th>Misses</th><td id="r-pos-miss"></td><td id="r-audio-miss"></td></tr>
+          <tr><th>False alarms</th><td id="r-pos-fa"></td><td id="r-audio-fa"></td></tr>
+        </tbody>
+      </table>
+      <p id="r-next" class="hint"></p>
+      <div class="row">
+        <button id="btn-again" class="primary" type="button">Play again</button>
+        <button id="btn-menu" type="button">Menu</button>
+      </div>
+    </section>
+
+  </main>
+
+  <script defer src="app.js"></script>
+</body>
+</html>

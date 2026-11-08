@@ -1,0 +1,16 @@
+{
+  "name": "dual-n-back",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dual N-Back working-memory game. Static output, no runtime dependencies.",
+  "scripts": {
+    "dev": "node serve.mjs 5173 src",
+    "build": "node build.mjs",
+    "preview": "node serve.mjs 4173 dist",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
