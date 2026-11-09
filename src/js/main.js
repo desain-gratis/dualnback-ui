@@ -1,6 +1,6 @@
 // UI + game loop. Wires the pure engine to the DOM.
 import { generateSequence, scoreSession, recommendLevel } from './engine.js';
-import { speakLetter, cancelSpeech, speechAvailable, beep } from './audio.js';
+import { speakLetter, cancelSpeech, speechAvailable, unlockAudio, beep } from './audio.js';
 import { loadState, saveState, DEFAULT_SETTINGS } from './storage.js';
 
 const STIMULUS_MS = 600; // how long a square stays lit
@@ -81,6 +81,7 @@ const pct = (x) => Math.round(x * 100) + '%';
 /* ---------- game loop ---------- */
 
 function startSession() {
+  unlockAudio(); // must run synchronously inside the tap (iOS autoplay rules)
   state.settings = readSettings();
   persist();
   const s = state.settings;
@@ -140,11 +141,14 @@ function nextTrial() {
   cells[t.pos].classList.add('lit');
   later(() => cells[t.pos].classList.remove('lit'), STIMULUS_MS);
 
-  if (session.speak) speakLetter(t.letter);
-  if (session.showLetter) {
+  // If speech is refused or fails, fall back to showing the letter so the
+  // session is still playable.
+  const showLetter = () => {
     $('letter').textContent = t.letter;
     later(() => { $('letter').textContent = ''; }, STIMULUS_MS + 200);
-  }
+  };
+  if (session.speak) speakLetter(t.letter, () => { if (session && !session.showLetter) showLetter(); });
+  if (session.showLetter) showLetter();
 
   later(endTrial, session.interval);
 }

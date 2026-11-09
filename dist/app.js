@@ -103,20 +103,90 @@ return n;
 }
 /* audio.js */
 let ctx = null;
+let voice = null;
 function speechAvailable() {
-return typeof window !== 'undefined' && 'speechSynthesis' in window;
+return typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
 }
-function speakLetter(letter) {
-if (!speechAvailable()) return false;
+const SPOKEN = {
+C: 'see',
+H: 'aitch',
+K: 'kay',
+L: 'ell',
+Q: 'cue',
+R: 'are',
+S: 'ess',
+T: 'tee',
+};
+function pickVoice() {
 try {
-window.speechSynthesis.cancel();
-const u = new SpeechSynthesisUtterance(letter);
-u.rate = 1.1;
+const voices = window.speechSynthesis.getVoices() || [];
+const en = voices.filter((v) => /^en[-_]/i.test(v.lang));
+voice = en.find((v) => /^en[-_]US$/i.test(v.lang) && v.localService) || en[0] || null;
+} catch (e) {
+voice = null;
+}
+}
+if (speechAvailable()) {
+pickVoice();
+try {
+window.speechSynthesis.addEventListener('voiceschanged', pickVoice);
+} catch (e) {
+/* older browsers */
+}
+}
+function makeUtterance(text) {
+const u = new SpeechSynthesisUtterance(text);
+u.lang = 'en-US'; // otherwise the device language voice reads English letters wrongly
+if (voice) u.voice = voice;
+return u;
+}
+/**
+* iOS only allows speech that was started from a user gesture. Call this
+* synchronously inside a tap/click handler; later speak() calls from timers
+* are then allowed.
+*/
+function unlockAudio() {
+if (speechAvailable()) {
+try {
+const u = makeUtterance(' ');
+u.volume = 0;
+window.speechSynthesis.speak(u);
+} catch (e) {
+/* ignore */
+}
+}
+try {
+const AC = window.AudioContext || window.webkitAudioContext;
+if (AC) {
+ctx = ctx || new AC();
+if (ctx.state === 'suspended') ctx.resume();
+}
+} catch (e) {
+/* audio is optional */
+}
+}
+/** Speak a letter. `onFail` is called if the browser refuses or errors. */
+function speakLetter(letter, onFail) {
+if (!speechAvailable()) {
+if (onFail) onFail();
+return false;
+}
+try {
+const synth = window.speechSynthesis;
+if (synth.speaking || synth.pending) synth.cancel();
+if (synth.paused) synth.resume();
+const u = makeUtterance(SPOKEN[letter] || letter.toLowerCase());
+u.rate = 0.95;
 u.pitch = 1;
 u.volume = 1;
-window.speechSynthesis.speak(u);
+u.onerror = (e) => {
+if (e && (e.error === 'interrupted' || e.error === 'canceled')) return;
+if (onFail) onFail();
+};
+synth.speak(u);
 return true;
 } catch (e) {
+if (onFail) onFail();
 return false;
 }
 }
@@ -128,6 +198,7 @@ try {
 const AC = window.AudioContext || window.webkitAudioContext;
 if (!AC) return;
 ctx = ctx || new AC();
+if (ctx.state === 'suspended') ctx.resume();
 const osc = ctx.createOscillator();
 const gain = ctx.createGain();
 osc.frequency.value = freq;
@@ -239,6 +310,7 @@ $('btn-clear').hidden = rows.length === 0;
 const pct = (x) => Math.round(x * 100) + '%';
 /* ---------- game loop ---------- */
 function startSession() {
+unlockAudio(); // must run synchronously inside the tap (iOS autoplay rules)
 state.settings = readSettings();
 persist();
 const s = state.settings;
@@ -289,11 +361,12 @@ setStatus(scored ? 'Go!' : `Warm-up ${i + 1} of ${session.n}`, !scored);
 updateProgress();
 cells[t.pos].classList.add('lit');
 later(() => cells[t.pos].classList.remove('lit'), STIMULUS_MS);
-if (session.speak) speakLetter(t.letter);
-if (session.showLetter) {
+const showLetter = () => {
 $('letter').textContent = t.letter;
 later(() => { $('letter').textContent = ''; }, STIMULUS_MS + 200);
-}
+};
+if (session.speak) speakLetter(t.letter, () => { if (session && !session.showLetter) showLetter(); });
+if (session.showLetter) showLetter();
 later(endTrial, session.interval);
 }
 function endTrial() {
