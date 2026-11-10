@@ -43,6 +43,8 @@
       <button id="btn-start" class="primary" type="button">Start session</button>
       <p class="hint">Keyboard: <kbd>A</kbd> position match &middot; <kbd>L</kbd> sound match &middot; <kbd>Esc</kbd> quit</p>
 
+      <button id="btn-settings" class="link" type="button">Voice settings</button>
+
       <details id="history-wrap">
         <summary>Recent sessions</summary>
         <table id="history">
@@ -52,6 +54,25 @@
         <p id="history-empty" class="hint">No sessions yet.</p>
         <button id="btn-clear" class="link" type="button">Clear history</button>
       </details>
+    </section>
+
+    <!-- VOICE SETTINGS -->
+    <section id="screen-settings" class="card" hidden>
+      <h2>Voice settings</h2>
+      <p class="lead">Choose how letters are read out. If you hear nothing on your phone, pick Recorded clips.</p>
+      <div class="settings-list">
+        <label class="field">
+          <span>Voice</span>
+          <select id="set-voice">
+            <option value="auto">Device voice</option>
+            <option value="recorded">Recorded clips</option>
+          </select>
+        </label>
+        <p class="hint left">Device voice uses your phone or computer's speech and switches to the recorded clips if it stays silent.</p>
+      </div>
+      <button id="btn-test" type="button">Test voice</button>
+      <p id="test-note" class="hint" aria-live="polite"></p>
+      <button id="btn-back" class="primary" type="button">Done</button>
     </section>
 
     <!-- GAME -->

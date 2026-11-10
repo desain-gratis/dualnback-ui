@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = {
   showLetter: false,
   speak: true,
   auto: true,
+  voice: 'auto',
 };
 
 export function loadState() {

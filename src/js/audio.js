@@ -1,25 +1,76 @@
-// Audio helpers: spoken letters via the Web Speech API, plus tiny feedback beeps.
+// Letter audio, with three layers so a session never goes silent:
+//   1. Pre-recorded clips (audio/<letter>.mp3) played through <audio> elements.
+//      Reliable on iOS, where the Web Speech API is not.
+//   2. Browser speech synthesis (spelled-out letter names).
+//   3. The caller shows the letter on screen (onFail callback).
 
-let ctx = null;
+const FILE_DIR = 'audio/';
+
+let clips = null; // { C: HTMLAudioElement, ... }
 let voice = null;
+
+export function audioAvailable() {
+  return typeof Audio !== 'undefined';
+}
 
 export function speechAvailable() {
   return typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
 }
 
-// Spelled-out letter names. Speaking a bare capital ("X") makes macOS say
-// "capital X", and a bare lowercase letter is read inconsistently between
-// voices, so we speak the name of the letter as a word instead.
-const SPOKEN = {
-  C: 'see',
-  H: 'aitch',
-  K: 'kay',
-  L: 'ell',
-  Q: 'cue',
-  R: 'are',
-  S: 'ess',
-  T: 'tee',
-};
+/* ---------- layer 1: recorded clips ---------- */
+
+function buildClips(letters) {
+  clips = {};
+  for (const letter of letters) {
+    const el = new Audio();
+    el.preload = 'auto';
+    el.setAttribute('playsinline', '');
+    el.src = `${FILE_DIR}${letter.toLowerCase()}.mp3`;
+    clips[letter] = el;
+  }
+}
+
+/** Create the clips early so they start downloading before the first tap. */
+export function preloadAudio(letters) {
+  if (!audioAvailable() || clips) return;
+  try {
+    buildClips(letters);
+    Object.values(clips).forEach((el) => el.load());
+  } catch (e) {
+    clips = null;
+  }
+}
+
+function playClip(letter) {
+  const el = clips && clips[letter];
+  if (!el) return Promise.reject(new Error('no clip'));
+  // A muted unlock play() may still be in flight (e.g. right after a tap).
+  // Starting now would interrupt it, so wait for it to settle first.
+  return (el.unlocking || Promise.resolve()).then(() => {
+    try {
+      el.pause();
+      el.currentTime = 0;
+    } catch (e) {
+      /* element may not be ready yet */
+    }
+    const p = el.play();
+    return p && p.then ? p : undefined;
+  });
+}
+
+/* ---------- layer 2: device speech synthesis ---------- */
+
+// Lowercase single letters are read by their name ("k" -> "kay") without the
+// "capital" prefix that macOS adds to uppercase ones. To force other wording
+// for a letter, add it here, e.g. { R: 'are' }.
+const SPOKEN = {};
+
+// How long to wait for the voice to actually start before using a recorded clip.
+const START_TIMEOUT_MS = 900;
+
+let speechWorks = false; // a device utterance has started at least once
+let speechFailures = 0;  // consecutive utterances that never started
+let keep = null;         // keep a reference: iOS may garbage-collect utterances mid-speech
 
 function pickVoice() {
   try {
@@ -33,7 +84,6 @@ function pickVoice() {
 
 if (speechAvailable()) {
   pickVoice();
-  // Voices load asynchronously in Chrome/Safari.
   try {
     window.speechSynthesis.addEventListener('voiceschanged', pickVoice);
   } catch (e) {
@@ -41,87 +91,112 @@ if (speechAvailable()) {
   }
 }
 
-function makeUtterance(text) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'en-US'; // otherwise the device language voice reads English letters wrongly
-  if (voice) u.voice = voice;
-  return u;
+// Speak with the device voice; `fallback` runs if it errors or never starts.
+function speakWithSynth(letter, fallback) {
+  if (!speechAvailable()) return fallback();
+  try {
+    const synth = window.speechSynthesis;
+    if (synth.speaking || synth.pending) synth.cancel();
+    if (synth.paused) synth.resume();
+
+    const u = new SpeechSynthesisUtterance(SPOKEN[letter] || letter.toLowerCase());
+    u.lang = 'en-US';
+    if (voice) u.voice = voice;
+    u.rate = 0.9;
+    u.pitch = 1;
+    u.volume = 1;
+
+    let started = false;
+    let fell = false;
+    const fall = () => {
+      if (fell) return;
+      fell = true;
+      fallback();
+    };
+    u.onstart = () => {
+      started = true;
+      speechWorks = true;
+      speechFailures = 0;
+    };
+    u.onerror = (e) => {
+      if (e && (e.error === 'interrupted' || e.error === 'canceled')) return;
+      fall();
+    };
+    keep = u;
+    synth.speak(u);
+
+    // Some browsers (notably iOS) accept the call and then stay silent.
+    if (!speechWorks) {
+      setTimeout(() => {
+        if (started || fell) return;
+        speechFailures++;
+        try { synth.cancel(); } catch (e) { /* ignore */ }
+        fall();
+      }, START_TIMEOUT_MS);
+    }
+  } catch (e) {
+    fallback();
+  }
 }
 
+/* ---------- public API ---------- */
+
 /**
- * iOS only allows speech that was started from a user gesture. Call this
- * synchronously inside a tap/click handler; later speak() calls from timers
- * are then allowed.
+ * Call synchronously inside a tap/click handler. iOS only lets speech and
+ * <audio> start later (from a timer) once they were used inside a gesture.
  */
 export function unlockAudio() {
+  speechFailures = 0;
   if (speechAvailable()) {
     try {
-      const u = makeUtterance(' ');
+      const u = new SpeechSynthesisUtterance(' ');
       u.volume = 0;
       window.speechSynthesis.speak(u);
     } catch (e) {
       /* ignore */
     }
   }
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      ctx = ctx || new AC();
-      if (ctx.state === 'suspended') ctx.resume();
+  if (clips) {
+    for (const el of Object.values(clips)) {
+      try {
+        el.muted = true;
+        const p = el.play();
+        const done = () => {
+          el.pause();
+          el.currentTime = 0;
+          el.muted = false;
+        };
+        if (p && p.then) {
+          el.unlocking = p.then(done, () => { el.muted = false; });
+        } else {
+          done();
+        }
+      } catch (e) {
+        el.muted = false;
+      }
     }
-  } catch (e) {
-    /* audio is optional */
   }
 }
 
-/** Speak a letter. `onFail` is called if the browser refuses or errors. */
-export function speakLetter(letter, onFail) {
-  if (!speechAvailable()) {
-    if (onFail) onFail();
-    return false;
-  }
-  try {
-    const synth = window.speechSynthesis;
-    // Only cancel when something is actually queued: cancel() immediately
-    // followed by speak() is silently dropped on iOS Safari.
-    if (synth.speaking || synth.pending) synth.cancel();
-    if (synth.paused) synth.resume();
-    const u = makeUtterance(SPOKEN[letter] || letter.toLowerCase());
-    u.rate = 0.95;
-    u.pitch = 1;
-    u.volume = 1;
-    u.onerror = (e) => {
-      // 'interrupted' / 'canceled' are expected when we cut speech off.
-      if (e && (e.error === 'interrupted' || e.error === 'canceled')) return;
-      if (onFail) onFail();
-    };
-    synth.speak(u);
-    return true;
-  } catch (e) {
-    if (onFail) onFail();
-    return false;
+/**
+ * Play a letter. mode 'auto' uses the device voice and drops to the recorded
+ * clips if it stays silent; 'recorded' always uses the clips. `onFail` runs
+ * only if every audio option failed (the caller then shows the letter).
+ */
+export function speakLetter(letter, onFail, mode = 'auto') {
+  const recorded = () => playClip(letter).catch(() => { if (onFail) onFail(); });
+  if (mode === 'recorded' || !speechAvailable() || (!speechWorks && speechFailures >= 2)) {
+    recorded();
+  } else {
+    speakWithSynth(letter, recorded);
   }
 }
 
 export function cancelSpeech() {
-  if (speechAvailable()) window.speechSynthesis.cancel();
-}
-
-// Short tone; used for start/finish cues.
-export function beep(freq = 660, ms = 120) {
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    ctx = ctx || new AC();
-    if (ctx.state === 'suspended') ctx.resume();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = freq;
-    gain.gain.value = 0.05;
-    osc.connect(gain).connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + ms / 1000);
-  } catch (e) {
-    /* audio is optional */
+  if (clips) {
+    for (const el of Object.values(clips)) {
+      try { el.pause(); } catch (e) { /* ignore */ }
+    }
   }
+  if (speechAvailable()) window.speechSynthesis.cancel();
 }

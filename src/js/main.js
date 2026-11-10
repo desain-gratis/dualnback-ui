@@ -1,6 +1,6 @@
 // UI + game loop. Wires the pure engine to the DOM.
-import { generateSequence, scoreSession, recommendLevel } from './engine.js';
-import { speakLetter, cancelSpeech, speechAvailable, unlockAudio, beep } from './audio.js';
+import { generateSequence, scoreSession, recommendLevel, LETTERS } from './engine.js';
+import { speakLetter, cancelSpeech, unlockAudio, preloadAudio } from './audio.js';
 import { loadState, saveState, DEFAULT_SETTINGS } from './storage.js';
 
 const STIMULUS_MS = 600; // how long a square stays lit
@@ -8,7 +8,12 @@ const FEEDBACK_MS = 350;
 const MAX_HISTORY = 20;
 
 const $ = (id) => document.getElementById(id);
-const screens = { menu: $('screen-menu'), game: $('screen-game'), results: $('screen-results') };
+const screens = {
+  menu: $('screen-menu'),
+  settings: $('screen-settings'),
+  game: $('screen-game'),
+  results: $('screen-results'),
+};
 const cells = Array.from(document.querySelectorAll('#grid .cell'));
 
 const state = loadState();
@@ -30,8 +35,9 @@ function readSettings() {
     trials: clamp($('set-trials').value, 10, 60, DEFAULT_SETTINGS.trials),
     interval: clamp($('set-interval').value, 1500, 6000, DEFAULT_SETTINGS.interval),
     speak: $('set-speak').checked,
-    showLetter: $('set-show').checked || !speechAvailable(),
+    showLetter: $('set-show').checked,
     auto: $('set-auto').checked,
+    voice: $('set-voice').value === 'recorded' ? 'recorded' : 'auto',
   };
 }
 
@@ -40,10 +46,10 @@ function writeSettings() {
   $('set-n').value = s.n;
   $('set-trials').value = s.trials;
   $('set-interval').value = String(s.interval);
-  $('set-speak').checked = s.speak && speechAvailable();
-  $('set-speak').disabled = !speechAvailable();
-  $('set-show').checked = s.showLetter || !speechAvailable();
+  $('set-speak').checked = s.speak;
+  $('set-show').checked = s.showLetter;
   $('set-auto').checked = s.auto;
+  $('set-voice').value = s.voice === 'recorded' ? 'recorded' : 'auto';
 }
 
 function persist() {
@@ -89,7 +95,8 @@ function startSession() {
   session = {
     n: s.n,
     interval: s.interval,
-    speak: s.speak && speechAvailable(),
+    speak: s.speak,
+    voice: s.voice,
     showLetter: s.showLetter,
     seq: generateSequence({ n: s.n, trials: s.trials }),
     i: -1,
@@ -107,7 +114,6 @@ function startSession() {
   clearAnswerStyles();
   setAnswerEnabled(false);
   show('game');
-  beep(520, 100);
   later(() => nextTrial(), 1200);
 }
 
@@ -147,7 +153,7 @@ function nextTrial() {
     $('letter').textContent = t.letter;
     later(() => { $('letter').textContent = ''; }, STIMULUS_MS + 200);
   };
-  if (session.speak) speakLetter(t.letter, () => { if (session && !session.showLetter) showLetter(); });
+  if (session.speak) speakLetter(t.letter, () => { if (session && !session.showLetter) showLetter(); }, session.voice);
   if (session.showLetter) showLetter();
 
   later(endTrial, session.interval);
@@ -181,7 +187,6 @@ function finishSession() {
   const next = recommendLevel(score, n);
   clearTimers();
   cancelSpeech();
-  beep(784, 160);
 
   state.history.push({
     date: Date.now(),
@@ -260,6 +265,27 @@ $('btn-start').addEventListener('click', startSession);
 $('btn-again').addEventListener('click', startSession);
 $('btn-menu').addEventListener('click', goMenu);
 $('btn-quit').addEventListener('click', quitSession);
+$('btn-settings').addEventListener('click', () => {
+  $('test-note').textContent = '';
+  show('settings');
+});
+$('btn-back').addEventListener('click', () => {
+  state.settings = readSettings();
+  persist();
+  goMenu();
+});
+$('btn-test').addEventListener('click', () => {
+  unlockAudio(); // runs inside the tap, like Start
+  const letter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+  const note = $('test-note');
+  note.textContent = `Playing "${letter}"…`;
+  speakLetter(
+    letter,
+    () => { note.textContent = 'No sound could be played. Check your media volume and silent mode.'; },
+    $('set-voice').value
+  );
+  setTimeout(() => { if (note.textContent.startsWith('Playing')) note.textContent = `Played "${letter}". Nothing heard? Choose Recorded clips.`; }, 1500);
+});
 $('btn-clear').addEventListener('click', () => {
   state.history = [];
   persist();
@@ -283,4 +309,5 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+preloadAudio(LETTERS);
 goMenu();

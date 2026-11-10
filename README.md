@@ -19,7 +19,7 @@ Build options: `node build.mjs --out public` (different folder), `node build.mjs
 
 ## Deploying
 
-`dist/` is three files: `index.html`, `style.css`, `app.js`. All paths are relative, so you can upload the folder to any static host (GitHub Pages, Netlify, Cloudflare Pages, S3, nginx) or a sub-folder of one. The bundle is a classic script, so it also opens straight from disk via `file://`.
+`dist/` contains `index.html`, `style.css`, `app.js` and the `audio/` folder. All paths are relative, so you can upload the folder to any static host (GitHub Pages, Netlify, Cloudflare Pages, S3, nginx) or a sub-folder of one. The bundle is a classic script, so it also opens straight from disk via `file://`.
 
 ## How it plays
 
@@ -29,7 +29,8 @@ Build options: `node build.mjs --out public` (different folder), `node build.mjs
 - With "adjust automatically" on: both modalities at 80%+ raises N, either below 50% lowers it.
 - Keys: `A` position, `L` sound, `Esc` quits, `Enter` replays from the results screen.
 - Settings and the last 20 sessions are saved in localStorage.
-- Letters are spoken with the browser's Web Speech API. If it is unavailable, letters are shown on screen instead.
+- Letter audio uses the device voice by default (lowercase letters, so macOS does not say "capital"). If the voice stays silent, as can happen on iOS, it switches to the pre-recorded clips in `src/audio/` (played via `<audio>`), then to showing the letter on screen. The Voice settings page (link on the menu, with a Test voice button) can force the recorded clips.
+- To regenerate or change the voice: `./tools/gen-audio.sh` (needs ffmpeg built with libflite; `VOICE=kal ./tools/gen-audio.sh`).
 
 ## Layout
 
@@ -38,10 +39,12 @@ src/
   index.html
   style.css
   js/engine.js    sequence generation + scoring (pure, tested)
-  js/audio.js     speech synthesis + beeps
+  js/audio.js     letter audio (clips, speech fallback)
+  audio/          letter clips (c.mp3 ... t.mp3)
   js/storage.js   localStorage
   js/main.js      UI and game loop
 build.mjs         bundles src/ -> dist/
+tools/            gen-audio.sh (regenerates the clips)
 serve.mjs         static dev/preview server
 test/             node:test unit tests
 ```

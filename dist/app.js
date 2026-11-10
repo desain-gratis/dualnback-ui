@@ -102,21 +102,56 @@ if (worst < 0.5) return Math.max(1, n - 1);
 return n;
 }
 /* audio.js */
-let ctx = null;
+const FILE_DIR = 'audio/';
+let clips = null; // { C: HTMLAudioElement, ... }
 let voice = null;
+function audioAvailable() {
+return typeof Audio !== 'undefined';
+}
 function speechAvailable() {
 return typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
 }
-const SPOKEN = {
-C: 'see',
-H: 'aitch',
-K: 'kay',
-L: 'ell',
-Q: 'cue',
-R: 'are',
-S: 'ess',
-T: 'tee',
-};
+/* ---------- layer 1: recorded clips ---------- */
+function buildClips(letters) {
+clips = {};
+for (const letter of letters) {
+const el = new Audio();
+el.preload = 'auto';
+el.setAttribute('playsinline', '');
+el.src = `${FILE_DIR}${letter.toLowerCase()}.mp3`;
+clips[letter] = el;
+}
+}
+/** Create the clips early so they start downloading before the first tap. */
+function preloadAudio(letters) {
+if (!audioAvailable() || clips) return;
+try {
+buildClips(letters);
+Object.values(clips).forEach((el) => el.load());
+} catch (e) {
+clips = null;
+}
+}
+function playClip(letter) {
+const el = clips && clips[letter];
+if (!el) return Promise.reject(new Error('no clip'));
+return (el.unlocking || Promise.resolve()).then(() => {
+try {
+el.pause();
+el.currentTime = 0;
+} catch (e) {
+/* element may not be ready yet */
+}
+const p = el.play();
+return p && p.then ? p : undefined;
+});
+}
+/* ---------- layer 2: device speech synthesis ---------- */
+const SPOKEN = {};
+const START_TIMEOUT_MS = 900;
+let speechWorks = false; // a device utterance has started at least once
+let speechFailures = 0;  // consecutive utterances that never started
+let keep = null;         // keep a reference: iOS may garbage-collect utterances mid-speech
 function pickVoice() {
 try {
 const voices = window.speechSynthesis.getVoices() || [];
@@ -134,81 +169,105 @@ window.speechSynthesis.addEventListener('voiceschanged', pickVoice);
 /* older browsers */
 }
 }
-function makeUtterance(text) {
-const u = new SpeechSynthesisUtterance(text);
-u.lang = 'en-US'; // otherwise the device language voice reads English letters wrongly
+function speakWithSynth(letter, fallback) {
+if (!speechAvailable()) return fallback();
+try {
+const synth = window.speechSynthesis;
+if (synth.speaking || synth.pending) synth.cancel();
+if (synth.paused) synth.resume();
+const u = new SpeechSynthesisUtterance(SPOKEN[letter] || letter.toLowerCase());
+u.lang = 'en-US';
 if (voice) u.voice = voice;
-return u;
+u.rate = 0.9;
+u.pitch = 1;
+u.volume = 1;
+let started = false;
+let fell = false;
+const fall = () => {
+if (fell) return;
+fell = true;
+fallback();
+};
+u.onstart = () => {
+started = true;
+speechWorks = true;
+speechFailures = 0;
+};
+u.onerror = (e) => {
+if (e && (e.error === 'interrupted' || e.error === 'canceled')) return;
+fall();
+};
+keep = u;
+synth.speak(u);
+if (!speechWorks) {
+setTimeout(() => {
+if (started || fell) return;
+speechFailures++;
+try { synth.cancel(); } catch (e) { /* ignore */ }
+fall();
+}, START_TIMEOUT_MS);
 }
+} catch (e) {
+fallback();
+}
+}
+/* ---------- public API ---------- */
 /**
-* iOS only allows speech that was started from a user gesture. Call this
-* synchronously inside a tap/click handler; later speak() calls from timers
-* are then allowed.
+* Call synchronously inside a tap/click handler. iOS only lets speech and
+* <audio> start later (from a timer) once they were used inside a gesture.
 */
 function unlockAudio() {
+speechFailures = 0;
 if (speechAvailable()) {
 try {
-const u = makeUtterance(' ');
+const u = new SpeechSynthesisUtterance(' ');
 u.volume = 0;
 window.speechSynthesis.speak(u);
 } catch (e) {
 /* ignore */
 }
 }
+if (clips) {
+for (const el of Object.values(clips)) {
 try {
-const AC = window.AudioContext || window.webkitAudioContext;
-if (AC) {
-ctx = ctx || new AC();
-if (ctx.state === 'suspended') ctx.resume();
-}
-} catch (e) {
-/* audio is optional */
-}
-}
-/** Speak a letter. `onFail` is called if the browser refuses or errors. */
-function speakLetter(letter, onFail) {
-if (!speechAvailable()) {
-if (onFail) onFail();
-return false;
-}
-try {
-const synth = window.speechSynthesis;
-if (synth.speaking || synth.pending) synth.cancel();
-if (synth.paused) synth.resume();
-const u = makeUtterance(SPOKEN[letter] || letter.toLowerCase());
-u.rate = 0.95;
-u.pitch = 1;
-u.volume = 1;
-u.onerror = (e) => {
-if (e && (e.error === 'interrupted' || e.error === 'canceled')) return;
-if (onFail) onFail();
+el.muted = true;
+const p = el.play();
+const done = () => {
+el.pause();
+el.currentTime = 0;
+el.muted = false;
 };
-synth.speak(u);
-return true;
+if (p && p.then) {
+el.unlocking = p.then(done, () => { el.muted = false; });
+} else {
+done();
+}
 } catch (e) {
-if (onFail) onFail();
-return false;
+el.muted = false;
+}
+}
+}
+}
+/**
+* Play a letter. mode 'auto' uses the device voice and drops to the recorded
+* clips if it stays silent; 'recorded' always uses the clips. `onFail` runs
+* only if every audio option failed (the caller then shows the letter).
+*/
+function speakLetter(letter, onFail, mode = 'auto') {
+const recorded = () => playClip(letter).catch(() => { if (onFail) onFail(); });
+if (mode === 'recorded' || !speechAvailable() || (!speechWorks && speechFailures >= 2)) {
+recorded();
+} else {
+speakWithSynth(letter, recorded);
 }
 }
 function cancelSpeech() {
+if (clips) {
+for (const el of Object.values(clips)) {
+try { el.pause(); } catch (e) { /* ignore */ }
+}
+}
 if (speechAvailable()) window.speechSynthesis.cancel();
-}
-function beep(freq = 660, ms = 120) {
-try {
-const AC = window.AudioContext || window.webkitAudioContext;
-if (!AC) return;
-ctx = ctx || new AC();
-if (ctx.state === 'suspended') ctx.resume();
-const osc = ctx.createOscillator();
-const gain = ctx.createGain();
-osc.frequency.value = freq;
-gain.gain.value = 0.05;
-osc.connect(gain).connect(ctx.destination);
-osc.start();
-osc.stop(ctx.currentTime + ms / 1000);
-} catch (e) {
-/* audio is optional */
-}
 }
 /* storage.js */
 const KEY = 'dualnback:v1';
@@ -219,6 +278,7 @@ interval: 3000,
 showLetter: false,
 speak: true,
 auto: true,
+voice: 'auto',
 };
 function loadState() {
 try {
@@ -247,7 +307,12 @@ const STIMULUS_MS = 600; // how long a square stays lit
 const FEEDBACK_MS = 350;
 const MAX_HISTORY = 20;
 const $ = (id) => document.getElementById(id);
-const screens = { menu: $('screen-menu'), game: $('screen-game'), results: $('screen-results') };
+const screens = {
+menu: $('screen-menu'),
+settings: $('screen-settings'),
+game: $('screen-game'),
+results: $('screen-results'),
+};
 const cells = Array.from(document.querySelectorAll('#grid .cell'));
 const state = loadState();
 let session = null;
@@ -265,8 +330,9 @@ n: clamp($('set-n').value, 1, 9, DEFAULT_SETTINGS.n),
 trials: clamp($('set-trials').value, 10, 60, DEFAULT_SETTINGS.trials),
 interval: clamp($('set-interval').value, 1500, 6000, DEFAULT_SETTINGS.interval),
 speak: $('set-speak').checked,
-showLetter: $('set-show').checked || !speechAvailable(),
+showLetter: $('set-show').checked,
 auto: $('set-auto').checked,
+voice: $('set-voice').value === 'recorded' ? 'recorded' : 'auto',
 };
 }
 function writeSettings() {
@@ -274,10 +340,10 @@ const s = state.settings;
 $('set-n').value = s.n;
 $('set-trials').value = s.trials;
 $('set-interval').value = String(s.interval);
-$('set-speak').checked = s.speak && speechAvailable();
-$('set-speak').disabled = !speechAvailable();
-$('set-show').checked = s.showLetter || !speechAvailable();
+$('set-speak').checked = s.speak;
+$('set-show').checked = s.showLetter;
 $('set-auto').checked = s.auto;
+$('set-voice').value = s.voice === 'recorded' ? 'recorded' : 'auto';
 }
 function persist() {
 state.history = state.history.slice(-MAX_HISTORY);
@@ -317,7 +383,8 @@ const s = state.settings;
 session = {
 n: s.n,
 interval: s.interval,
-speak: s.speak && speechAvailable(),
+speak: s.speak,
+voice: s.voice,
 showLetter: s.showLetter,
 seq: generateSequence({ n: s.n, trials: s.trials }),
 i: -1,
@@ -334,7 +401,6 @@ updateProgress();
 clearAnswerStyles();
 setAnswerEnabled(false);
 show('game');
-beep(520, 100);
 later(() => nextTrial(), 1200);
 }
 function later(fn, ms) {
@@ -365,7 +431,7 @@ const showLetter = () => {
 $('letter').textContent = t.letter;
 later(() => { $('letter').textContent = ''; }, STIMULUS_MS + 200);
 };
-if (session.speak) speakLetter(t.letter, () => { if (session && !session.showLetter) showLetter(); });
+if (session.speak) speakLetter(t.letter, () => { if (session && !session.showLetter) showLetter(); }, session.voice);
 if (session.showLetter) showLetter();
 later(endTrial, session.interval);
 }
@@ -393,7 +459,6 @@ const score = scoreSession(seq, n, responses);
 const next = recommendLevel(score, n);
 clearTimers();
 cancelSpeech();
-beep(784, 160);
 state.history.push({
 date: Date.now(),
 n,
@@ -458,6 +523,27 @@ $('btn-start').addEventListener('click', startSession);
 $('btn-again').addEventListener('click', startSession);
 $('btn-menu').addEventListener('click', goMenu);
 $('btn-quit').addEventListener('click', quitSession);
+$('btn-settings').addEventListener('click', () => {
+$('test-note').textContent = '';
+show('settings');
+});
+$('btn-back').addEventListener('click', () => {
+state.settings = readSettings();
+persist();
+goMenu();
+});
+$('btn-test').addEventListener('click', () => {
+unlockAudio(); // runs inside the tap, like Start
+const letter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+const note = $('test-note');
+note.textContent = `Playing "${letter}"…`;
+speakLetter(
+letter,
+() => { note.textContent = 'No sound could be played. Check your media volume and silent mode.'; },
+$('set-voice').value
+);
+setTimeout(() => { if (note.textContent.startsWith('Playing')) note.textContent = `Played "${letter}". Nothing heard? Choose Recorded clips.`; }, 1500);
+});
 $('btn-clear').addEventListener('click', () => {
 state.history = [];
 persist();
@@ -477,5 +563,6 @@ else if (key === 'escape') quitSession();
 startSession();
 }
 });
+preloadAudio(LETTERS);
 goMenu();
 })();

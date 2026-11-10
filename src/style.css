@@ -40,6 +40,12 @@ h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.02em; }
 h2 { margin: 0 0 8px; font-size: 22px; }
 .lead { color: var(--muted); margin: 0 0 20px; }
 .hint { color: var(--muted); font-size: 13px; margin: 12px 0 0; text-align: center; }
+.hint.left { text-align: left; margin-top: 0; }
+.settings-list { display: grid; gap: 10px; margin-bottom: 18px; }
+#btn-test { width: 100%; }
+#set-voice { width: 160px; }
+#btn-back { margin-top: 16px; }
+#test-note { min-height: 1.5em; }
 
 kbd {
   font: 600 11px ui-monospace, Menlo, Consolas, monospace;
